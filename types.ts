@@ -34,3 +34,17 @@ export interface ViewState {
   offsetX: number;
   offsetY: number;
 }
+
+export interface Canvas {
+  id: string;
+  name: string;
+  nodes: WorkflowNode[];
+  connections: Connection[];
+  lastModified: number;
+}
+
+export interface CanvasMetadata {
+  id: string;
+  name: string;
+  lastModified: number;
+}

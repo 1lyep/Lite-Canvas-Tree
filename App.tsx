@@ -1,15 +1,27 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Plus, Wand2, Moon, Sun, Loader2 } from 'lucide-react';
-import { WorkflowNode, Connection, NodeStatus, NodeType } from './types';
+import { WorkflowNode, Connection, NodeStatus, NodeType, CanvasMetadata, Canvas } from './types';
 import { NodeItem } from './components/NodeItem';
 import { ConnectionLine, TempConnectionLine } from './components/ConnectionLine';
 import { generateWorkflow } from './services/geminiService';
+import { storageService } from './services/storageService';
+import { Sidebar } from './components/Sidebar';
 
 export default function App() {
   // --- State ---
   const [isDarkMode, setIsDarkMode] = useState(false);
+
+  // Canvas Management
+  const [currentCanvasId, setCurrentCanvasId] = useState<string | null>(null);
+  const [currentCanvasName, setCurrentCanvasName] = useState('Untitled Canvas');
+  const [canvases, setCanvases] = useState<CanvasMetadata[]>([]);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // Canvas Content
   const [nodes, setNodes] = useState<WorkflowNode[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
+
+  // Selection
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
 
@@ -37,6 +49,110 @@ export default function App() {
 
   // Mouse Tracking
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+
+  // --- Initialization ---
+
+  // Load initial canvases list
+  useEffect(() => {
+    const list = storageService.getCanvases();
+    setCanvases(list);
+
+    // Auto-load most recent or create new
+    if (list.length > 0) {
+      loadCanvas(list[0].id);
+    } else {
+      createNewCanvas();
+    }
+  }, []);
+
+  // Use refs to track if 'nodes' or 'connections' changes should trigger a save
+  // We want to avoid saving when simply switching canvases
+  const skipSave = useRef(false);
+
+  // Auto-save effect
+  useEffect(() => {
+    if (!currentCanvasId || skipSave.current) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      saveCurrentCanvas();
+    }, 1000); // 1s debounce
+
+    return () => clearTimeout(timer);
+  }, [nodes, connections, currentCanvasName]); // Removed currentCanvasId from dep to avoid save-on-switch
+
+  // --- Canvas Logic ---
+
+  const loadCanvas = (id: string) => {
+    const canvas = storageService.loadCanvas(id);
+    if (canvas) {
+      skipSave.current = true; // Prevent triggering save immediately after load
+      setCurrentCanvasId(canvas.id);
+      setCurrentCanvasName(canvas.name);
+      setNodes(canvas.nodes);
+      setConnections(canvas.connections);
+
+      // Update sidebar highlight
+      setCanvases(prev => {
+        // Just ensures the list is fresh if needed, or we might need to re-fetch if we suspect desync
+        // For now just relying on local state is fine, but lets refresh sorting if we modify date
+        return storageService.getCanvases();
+      });
+
+      // Allow saving again after a short delay
+      setTimeout(() => {
+        skipSave.current = false;
+      }, 100);
+
+      // Clear selection
+      setSelectedNodeId(null);
+      setSelectedConnectionId(null);
+    }
+  };
+
+  const createNewCanvas = () => {
+    const newCanvas = storageService.createCanvas(`New Canvas ${canvases.length + 1}`);
+    // Save it immediately so it exists
+    storageService.saveCanvas(newCanvas);
+
+    // Update list
+    setCanvases(storageService.getCanvases());
+
+    // Load it
+    loadCanvas(newCanvas.id);
+    setIsSidebarOpen(false);
+  };
+
+  const saveCurrentCanvas = () => {
+    if (!currentCanvasId) return;
+
+    const canvas: Canvas = {
+      id: currentCanvasId,
+      name: currentCanvasName,
+      nodes,
+      connections,
+      lastModified: Date.now()
+    };
+
+    storageService.saveCanvas(canvas);
+    setCanvases(storageService.getCanvases()); // Update list to reflect new mod time
+  };
+
+  const deleteCanvas = (id: string) => {
+    storageService.deleteCanvas(id);
+    const updatedList = storageService.getCanvases();
+    setCanvases(updatedList);
+
+    // If we deleted the current one, switch to another
+    if (id === currentCanvasId) {
+      if (updatedList.length > 0) {
+        loadCanvas(updatedList[0].id);
+      } else {
+        createNewCanvas();
+      }
+    }
+  };
 
   // --- Handlers ---
 
@@ -167,10 +283,13 @@ export default function App() {
   };
 
   const addNode = () => {
+    // If no canvas open, create one first? (Should ideally be handled by init)
+
+    // Position near center but randomized slightly to avoid stacking
     const newNode: WorkflowNode = {
       id: `node-${Date.now()}`,
-      x: window.innerWidth / 2 - 128,
-      y: window.innerHeight / 2 - 80,
+      x: window.innerWidth / 2 - 128 + (Math.random() * 40 - 20),
+      y: window.innerHeight / 2 - 80 + (Math.random() * 40 - 20),
       width: 256,
       height: 160,
       title: 'New Task',
@@ -210,6 +329,13 @@ export default function App() {
       const { nodes: newNodes, connections: newConnections } = await generateWorkflow(aiPromptText);
       setNodes(newNodes);
       setConnections(newConnections);
+
+      // Auto-rename canvas if it's the default name
+      if (currentCanvasName.startsWith('New Canvas') || currentCanvasName === 'Untitled Canvas') {
+        const suggestedName = aiPromptText.split(' ').slice(0, 4).join(' ') + '...';
+        setCurrentCanvasName(suggestedName);
+      }
+
       setShowAIPrompt(false);
       setAiPromptText('');
     } catch (e) {
@@ -261,8 +387,33 @@ export default function App() {
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
       >
+
+        {/* --- Sidebar & Toggle --- */}
+        {/* --- Sidebar & Toggle --- */}
+        <Sidebar
+          canvases={canvases}
+          currentCanvasId={currentCanvasId}
+          onSelect={loadCanvas}
+          onCreate={createNewCanvas}
+          onDelete={deleteCanvas}
+          isOpen={isSidebarOpen}
+          onToggle={() => setIsSidebarOpen(!isSidebarOpen)}
+        />
+
         {/* --- Toolbar --- */}
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 bg-white dark:bg-slate-900 shadow-lg dark:shadow-slate-900/50 rounded-full px-4 py-2 flex items-center gap-2 border border-slate-200 dark:border-slate-800">
+        <div className={`absolute top-4 left-1/2 -translate-x-1/2 z-30 bg-white dark:bg-slate-900 shadow-lg dark:shadow-slate-900/50 rounded-full px-4 py-2 flex items-center gap-2 border border-slate-200 dark:border-slate-800 transition-all duration-300 ${isSidebarOpen ? 'ml-32' : 'ml-7'}`}>
+
+          {/* Canvas Name Editor */}
+          <input
+            type="text"
+            value={currentCanvasName}
+            onChange={(e) => setCurrentCanvasName(e.target.value)}
+            className="bg-transparent border-none focus:outline-none font-semibold text-sm w-32 text-center text-slate-700 dark:text-slate-200"
+            placeholder="Canvas Name"
+          />
+
+          <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1"></div>
+
           <button
             onClick={addNode}
             className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 transition-colors tooltip-trigger relative group"
@@ -293,57 +444,59 @@ export default function App() {
         </div>
 
         {/* --- Canvas Content --- */}
-        <svg className="absolute top-0 left-0 w-full h-full pointer-events-none z-0">
-          {/* Existing Connections */}
-          {connections.map(conn => {
-            const start = nodes.find(n => n.id === conn.from);
-            const end = nodes.find(n => n.id === conn.to);
-            if (!start || !end) return null;
-            return (
-              <ConnectionLine
-                key={conn.id}
-                startNode={start}
-                endNode={end}
-                isSelected={selectedConnectionId === conn.id}
-                onSelect={() => {
-                  setSelectedConnectionId(conn.id);
-                  setSelectedNodeId(null);
-                }}
-                isDarkMode={isDarkMode}
+        <div className={`w-full h-full transition-all duration-300 ${isSidebarOpen ? 'ml-64 w-[calc(100%-16rem)]' : 'ml-14 w-[calc(100%-3.5rem)]'}`}>
+          <svg className="absolute top-0 left-0 w-full h-full pointer-events-none z-0">
+            {/* Existing Connections */}
+            {connections.map(conn => {
+              const start = nodes.find(n => n.id === conn.from);
+              const end = nodes.find(n => n.id === conn.to);
+              if (!start || !end) return null;
+              return (
+                <ConnectionLine
+                  key={conn.id}
+                  startNode={start}
+                  endNode={end}
+                  isSelected={selectedConnectionId === conn.id}
+                  onSelect={() => {
+                    setSelectedConnectionId(conn.id);
+                    setSelectedNodeId(null);
+                  }}
+                  isDarkMode={isDarkMode}
+                />
+              );
+            })}
+
+            {/* Temporary Connection Line (while dragging) */}
+            {connectionDraft && (
+              <TempConnectionLine
+                startX={connectionDraft.startX}
+                startY={connectionDraft.startY}
+                mouseX={mousePos.x}
+                mouseY={mousePos.y}
               />
-            );
-          })}
+            )}
+          </svg>
 
-          {/* Temporary Connection Line (while dragging) */}
-          {connectionDraft && (
-            <TempConnectionLine
-              startX={connectionDraft.startX}
-              startY={connectionDraft.startY}
-              mouseX={mousePos.x}
-              mouseY={mousePos.y}
-            />
-          )}
-        </svg>
-
-        {/* Nodes Layer */}
-        <div className="absolute top-0 left-0 w-full h-full z-0 pointer-events-none">
-          {nodes.map(node => (
-            <NodeItem
-              key={node.id}
-              node={node}
-              isSelected={selectedNodeId === node.id}
-              isDragging={draggingNodeId === node.id}
-              isResizing={resizingNodeId === node.id}
-              onMouseDown={(e) => handlePointerDown(e, node.id)}
-              onClick={(id) => setSelectedNodeId(id)}
-              onStatusChange={handleStatusChange}
-              onConnectStart={handleConnectStart}
-              onConnectEnd={handleConnectEnd}
-              onResizeStart={handleResizeStart}
-              onUpdate={handleNodeUpdate}
-              onDelete={handleNodeDelete}
-            />
-          ))}
+          {/* Nodes Layer */}
+          <div className="absolute top-0 left-0 w-full h-full z-0 pointer-events-none">
+            {nodes.map(node => (
+              <NodeItem
+                key={node.id}
+                node={node}
+                isSelected={selectedNodeId === node.id}
+                isDragging={draggingNodeId === node.id}
+                isResizing={resizingNodeId === node.id}
+                onMouseDown={(e) => handlePointerDown(e, node.id)}
+                onClick={(id) => setSelectedNodeId(id)}
+                onStatusChange={handleStatusChange}
+                onConnectStart={handleConnectStart}
+                onConnectEnd={handleConnectEnd}
+                onResizeStart={handleResizeStart}
+                onUpdate={handleNodeUpdate}
+                onDelete={handleNodeDelete}
+              />
+            ))}
+          </div>
         </div>
 
         {/* --- AI Prompt Modal --- */}
@@ -398,7 +551,7 @@ export default function App() {
 
         {/* --- Instructions / Empty State --- */}
         {nodes.length === 0 && (
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none opacity-40">
+          <div className={`absolute top-1/2 left-1/2 -translate-y-1/2 text-center pointer-events-none opacity-40 transition-all duration-300 ${isSidebarOpen ? 'ml-32 -translate-x-1/2' : 'ml-7 -translate-x-1/2'}`}>
             <div className="w-24 h-24 bg-slate-200 dark:bg-slate-800 rounded-full mx-auto mb-4 flex items-center justify-center">
               <Plus className="w-10 h-10 text-slate-400 dark:text-slate-500" />
             </div>
