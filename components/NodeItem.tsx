@@ -49,14 +49,14 @@ const statusConfig = {
 
 const getTypeStyles = (type: NodeType) => {
   // Removed 'flex flex-col' from base as it's now handled by the inner wrapper
-  const base = "absolute transition-all duration-200 cursor-grab active:cursor-grabbing group select-none";
-  
+  const base = "absolute transition-all duration-200 cursor-grab active:cursor-grabbing group select-none pointer-events-auto";
+
   switch (type) {
     case NodeType.MILESTONE:
       return {
         container: `${base} rounded-full border-2`,
-        header: "px-6 py-3 flex items-center justify-between h-full gap-2", 
-        body: "hidden", 
+        header: "px-6 py-3 flex items-center justify-between h-full gap-2",
+        body: "hidden",
         typeIcon: <Flag className="w-4 h-4 text-fuchsia-600 dark:text-fuchsia-400 shrink-0" />
       };
     case NodeType.DECISION:
@@ -84,13 +84,13 @@ const getTypeStyles = (type: NodeType) => {
   }
 };
 
-export const NodeItem: React.FC<NodeItemProps> = ({ 
-  node, 
-  isSelected, 
+export const NodeItem: React.FC<NodeItemProps> = ({
+  node,
+  isSelected,
   isDragging,
   isResizing,
-  onMouseDown, 
-  onClick, 
+  onMouseDown,
+  onClick,
   onStatusChange,
   onConnectStart,
   onConnectEnd,
@@ -100,20 +100,20 @@ export const NodeItem: React.FC<NodeItemProps> = ({
 }) => {
   const [showMenu, setShowMenu] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
-  
+
   // Refs for click outside detection
   const menuRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
-  
+
   const statusInfo = statusConfig[node.status];
   const typeStyle = getTypeStyles(node.type);
-  
+
   // Close menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       // Close if click is NOT in menu AND NOT on the button
       if (
-        menuRef.current && 
+        menuRef.current &&
         !menuRef.current.contains(event.target as Node) &&
         menuButtonRef.current &&
         !menuButtonRef.current.contains(event.target as Node)
@@ -151,12 +151,12 @@ export const NodeItem: React.FC<NodeItemProps> = ({
     }
 
     const target = e.target as HTMLElement;
-    
+
     // 2. Safety check for interactive elements
     if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.closest('button') || target.closest('.node-handle') || target.closest('.resize-handle')) {
       return;
     }
-    
+
     // 3. Start Drag
     onMouseDown(e, node.id);
   };
@@ -213,24 +213,24 @@ export const NodeItem: React.FC<NodeItemProps> = ({
           so their backgrounds don't bleed out of rounded corners.
       */}
       <div className="flex flex-col w-full h-full overflow-hidden rounded-[inherit]">
-        
+
         {/* Node Header */}
         <div className={`${typeStyle.header} ${statusInfo.headerBg}`}>
           {/* Left Side: Status & Type & Title */}
           <div className="flex items-center gap-2 overflow-hidden flex-1 min-w-0">
-            <button 
+            <button
               onClick={handleStatusToggle}
               className={`p-1 rounded-full hover:bg-black/5 dark:hover:bg-white/10 transition-colors flex-shrink-0 ${statusInfo.iconColor}`}
               onPointerDown={stopPropagation}
             >
               {statusInfo.icon}
             </button>
-            
+
             {typeStyle.typeIcon}
-            
+
             <div className="flex-1 min-w-0 flex items-center relative h-6">
               {isEditing ? (
-                <input 
+                <input
                   autoFocus
                   type="text"
                   value={node.title}
@@ -248,7 +248,7 @@ export const NodeItem: React.FC<NodeItemProps> = ({
               )}
             </div>
           </div>
-          
+
           {/* Right Side: Actions */}
           <div className="flex items-center gap-0.5 flex-shrink-0">
             {/* Edit Toggle Button */}
@@ -263,7 +263,7 @@ export const NodeItem: React.FC<NodeItemProps> = ({
 
             {/* Menu Button */}
             <div className="relative">
-              <button 
+              <button
                 ref={menuButtonRef}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -277,7 +277,7 @@ export const NodeItem: React.FC<NodeItemProps> = ({
             </div>
           </div>
         </div>
-        
+
         {/* Node Body (Description) */}
         <div className={`${typeStyle.body} relative`}>
           {isEditing ? (
@@ -291,7 +291,7 @@ export const NodeItem: React.FC<NodeItemProps> = ({
               placeholder="Add description..."
             />
           ) : (
-            <div 
+            <div
               className="w-full h-full p-1 text-slate-600 dark:text-slate-400 text-xs leading-relaxed overflow-hidden select-none whitespace-pre-wrap"
             >
               {node.description || <span className="italic opacity-50">No description</span>}
@@ -303,7 +303,7 @@ export const NodeItem: React.FC<NodeItemProps> = ({
 
       {/* --- Dropdown Menu (Moved Outside Overflow-Hidden) --- */}
       {showMenu && (
-        <div 
+        <div
           ref={menuRef}
           className="absolute right-3 top-10 w-48 bg-white dark:bg-slate-800 rounded-lg shadow-xl border border-slate-200 dark:border-slate-700 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100 select-none"
           onPointerDown={stopPropagation}
@@ -322,9 +322,9 @@ export const NodeItem: React.FC<NodeItemProps> = ({
             <button onClick={() => handleTypeChange(NodeType.START_END)} className="w-full text-left px-2 py-1.5 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded flex items-center gap-2">
               <PlayCircle className="w-3 h-3" /> Start / End
             </button>
-            
+
             <div className="h-px bg-slate-100 dark:bg-slate-700 my-1" />
-            
+
             <button onClick={() => onDelete(node.id)} className="w-full text-left px-2 py-1.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded flex items-center gap-2">
               <Trash2 className="w-3 h-3" /> Delete
             </button>
@@ -333,35 +333,35 @@ export const NodeItem: React.FC<NodeItemProps> = ({
       )}
 
       {/* --- Resize Handle --- */}
-      <div 
+      <div
         className="resize-handle absolute bottom-0 right-0 w-6 h-6 cursor-nwse-resize flex items-center justify-center text-slate-400 dark:text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity z-20"
         onPointerDown={(e) => {
           e.stopPropagation();
           onResizeStart(e, node.id);
         }}
       >
-         <GripHorizontal className="w-4 h-4 rotate-45" />
+        <GripHorizontal className="w-4 h-4 rotate-45" />
       </div>
 
       {/* --- Connection Handles --- */}
-      
+
       {/* Input Handle (Left) */}
-      <div 
+      <div
         className="node-handle absolute left-0 top-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 flex items-center justify-center cursor-crosshair group/handle z-20"
         onPointerDown={(e) => {
-           e.stopPropagation();
-           onConnectStart(e, node.id, 'target');
+          e.stopPropagation();
+          onConnectStart(e, node.id, 'target');
         }}
       >
         <div className="w-3 h-3 rounded-full bg-white dark:bg-slate-800 border-2 border-slate-400 dark:border-slate-500 group-hover/handle:bg-indigo-500 group-hover/handle:border-indigo-500 transition-colors shadow-sm" />
       </div>
 
       {/* Output Handle (Right) */}
-      <div 
+      <div
         className="node-handle absolute right-0 top-1/2 translate-x-1/2 -translate-y-1/2 w-4 h-4 flex items-center justify-center cursor-crosshair group/handle z-20"
         onPointerDown={(e) => {
-           e.stopPropagation();
-           onConnectStart(e, node.id, 'source');
+          e.stopPropagation();
+          onConnectStart(e, node.id, 'source');
         }}
       >
         <div className="w-3 h-3 rounded-full bg-white dark:bg-slate-800 border-2 border-slate-400 dark:border-slate-500 group-hover/handle:bg-indigo-500 group-hover/handle:border-indigo-500 transition-colors shadow-sm" />
