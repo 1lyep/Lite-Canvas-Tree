@@ -1,0 +1,5 @@
+{
+  "name": "FlowStream Canvas",
+  "description": "A collaborative workflow and architecture diagramming tool featuring drag-and-drop nodes, status tracking, and AI-assisted workflow generation.",
+  "requestFramePermissions": []
+}
