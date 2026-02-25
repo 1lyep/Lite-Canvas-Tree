@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Wand2, Moon, Sun, Loader2 } from 'lucide-react';
+import { Plus, Wand2, Moon, Sun, Loader2, Download, Upload, Monitor } from 'lucide-react';
 import { WorkflowNode, Connection, NodeStatus, NodeType, CanvasMetadata, Canvas } from './types';
 import { NodeItem } from './components/NodeItem';
 import { ConnectionLine, TempConnectionLine } from './components/ConnectionLine';
@@ -9,10 +9,16 @@ import { Sidebar } from './components/Sidebar';
 
 export default function App() {
   // --- State ---
+  type ThemeMode = 'light' | 'dark' | 'system';
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+    const saved = localStorage.getItem('flowstream_theme');
+    return (saved as ThemeMode) || 'system';
+  });
   const [isDarkMode, setIsDarkMode] = useState(false);
 
   // Canvas Management
   const [currentCanvasId, setCurrentCanvasId] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [currentCanvasName, setCurrentCanvasName] = useState('Untitled Canvas');
   const [canvases, setCanvases] = useState<CanvasMetadata[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -22,8 +28,10 @@ export default function App() {
   const [connections, setConnections] = useState<Connection[]>([]);
 
   // Selection
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
+  const [selectionBox, setSelectionBox] = useState<{ startX: number, startY: number, endX: number, endY: number } | null>(null);
+  const selectionBaseline = useRef<string[]>([]);
 
   // Connection Draft State
   const [connectionDraft, setConnectionDraft] = useState<{
@@ -35,7 +43,8 @@ export default function App() {
 
   // Dragging State
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
-  const dragOffset = useRef({ x: 0, y: 0 });
+  const dragStartMousePos = useRef({ x: 0, y: 0 });
+  const dragStartNodes = useRef<{ id: string, startX: number, startY: number }[]>([]);
 
   // Resizing State
   const [resizingNodeId, setResizingNodeId] = useState<string | null>(null);
@@ -106,7 +115,7 @@ export default function App() {
       }, 100);
 
       // Clear selection
-      setSelectedNodeId(null);
+      setSelectedNodeIds([]);
       setSelectedConnectionId(null);
     }
   };
@@ -161,8 +170,20 @@ export default function App() {
 
     // Canvas click
     if (!nodeId) {
-      setSelectedNodeId(null);
+      if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        setSelectedNodeIds([]);
+        selectionBaseline.current = [];
+      } else {
+        selectionBaseline.current = [...selectedNodeIds];
+      }
       setSelectedConnectionId(null);
+      setSelectionBox({
+        startX: e.clientX,
+        startY: e.clientY,
+        endX: e.clientX,
+        endY: e.clientY
+      });
+      e.currentTarget.setPointerCapture(e.pointerId);
       return;
     }
 
@@ -170,12 +191,26 @@ export default function App() {
     e.currentTarget.setPointerCapture(e.pointerId);
     const node = nodes.find(n => n.id === nodeId);
     if (node) {
+      let newSelectedIds = [...selectedNodeIds];
+      if (!newSelectedIds.includes(nodeId)) {
+        if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
+          newSelectedIds = [nodeId];
+        } else {
+          newSelectedIds.push(nodeId);
+        }
+        setSelectedNodeIds(newSelectedIds);
+      } else if (e.shiftKey || e.ctrlKey || e.metaKey) {
+        newSelectedIds = newSelectedIds.filter(id => id !== nodeId);
+        setSelectedNodeIds(newSelectedIds);
+        return;
+      }
+
       setDraggingNodeId(nodeId);
       setSelectedConnectionId(null);
-      dragOffset.current = {
-        x: e.clientX - node.x,
-        y: e.clientY - node.y
-      };
+
+      const selectedNodesToDrag = nodes.filter(n => newSelectedIds.includes(n.id));
+      dragStartNodes.current = selectedNodesToDrag.map(n => ({ id: n.id, startX: n.x, startY: n.y }));
+      dragStartMousePos.current = { x: e.clientX, y: e.clientY };
     }
   };
 
@@ -261,16 +296,39 @@ export default function App() {
 
     // Handle Drag
     if (draggingNodeId) {
+      const dx = e.clientX - dragStartMousePos.current.x;
+      const dy = e.clientY - dragStartMousePos.current.y;
+
       setNodes(prev => prev.map(n => {
-        if (n.id === draggingNodeId) {
+        const startState = dragStartNodes.current.find(s => s.id === n.id);
+        if (startState) {
           return {
             ...n,
-            x: e.clientX - dragOffset.current.x,
-            y: e.clientY - dragOffset.current.y
+            x: startState.startX + dx,
+            y: startState.startY + dy
           };
         }
         return n;
       }));
+      return;
+    }
+
+    // Handle Selection Box
+    if (selectionBox) {
+      setSelectionBox(prev => prev ? { ...prev, endX: e.clientX, endY: e.clientY } : null);
+
+      const minX = Math.min(selectionBox.startX, e.clientX);
+      const maxX = Math.max(selectionBox.startX, e.clientX);
+      const minY = Math.min(selectionBox.startY, e.clientY);
+      const maxY = Math.max(selectionBox.startY, e.clientY);
+
+      const intersectingIds = nodes.filter(n => {
+        return n.x < maxX && (n.x + n.width) > minX &&
+          n.y < maxY && (n.y + n.height) > minY;
+      }).map(n => n.id);
+
+      setSelectedNodeIds(Array.from(new Set([...selectionBaseline.current, ...intersectingIds])));
+      return;
     }
   };
 
@@ -280,6 +338,7 @@ export default function App() {
     if (connectionDraft) {
       setConnectionDraft(null);
     }
+    setSelectionBox(null);
   };
 
   const addNode = () => {
@@ -298,7 +357,7 @@ export default function App() {
       type: NodeType.TASK
     };
     setNodes(prev => [...prev, newNode]);
-    setSelectedNodeId(newNode.id);
+    setSelectedNodeIds([newNode.id]);
     setSelectedConnectionId(null);
   };
 
@@ -310,10 +369,14 @@ export default function App() {
     setNodes(prev => prev.map(n => n.id === nodeId ? { ...n, status: newStatus } : n));
   };
 
+  const handleNodesDelete = (nodeIds: string[]) => {
+    setNodes(prev => prev.filter(n => !nodeIds.includes(n.id)));
+    setConnections(prev => prev.filter(c => !nodeIds.includes(c.from) && !nodeIds.includes(c.to)));
+    setSelectedNodeIds(prev => prev.filter(id => !nodeIds.includes(id)));
+  };
+
   const handleNodeDelete = (nodeId: string) => {
-    setNodes(prev => prev.filter(n => n.id !== nodeId));
-    setConnections(prev => prev.filter(c => c.from !== nodeId && c.to !== nodeId));
-    if (selectedNodeId === nodeId) setSelectedNodeId(null);
+    handleNodesDelete([nodeId]);
   };
 
   const handleConnectionDelete = (connId: string) => {
@@ -345,18 +408,96 @@ export default function App() {
     }
   };
 
-  const toggleDarkMode = () => {
-    setIsDarkMode(!isDarkMode);
+  const handleExportCanvas = () => {
+    if (!currentCanvasId) return;
+    const canvas: Canvas = {
+      id: currentCanvasId,
+      name: currentCanvasName,
+      nodes,
+      connections,
+      lastModified: Date.now()
+    };
+    const dataStr = JSON.stringify(canvas, null, 2);
+    const blob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${currentCanvasName.replace(/\\s+/g, '_')}_${Date.now()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportCanvas = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const content = event.target?.result as string;
+        const parsed = JSON.parse(content) as Partial<Canvas>;
+
+        if (!parsed.nodes || !parsed.connections) {
+          alert('Invalid canvas file format.');
+          return;
+        }
+
+        const newCanvasId = crypto.randomUUID();
+        const importedCanvas: Canvas = {
+          id: newCanvasId,
+          name: parsed.name ? `${parsed.name} (Imported)` : 'Imported Canvas',
+          nodes: parsed.nodes,
+          connections: parsed.connections,
+          lastModified: Date.now()
+        };
+
+        storageService.saveCanvas(importedCanvas);
+        setCanvases(storageService.getCanvases());
+        loadCanvas(newCanvasId);
+      } catch (err) {
+        alert('Failed to parse the file.');
+      }
+    };
+    reader.readAsText(file);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const toggleThemeMode = () => {
+    setThemeMode(prev => {
+      if (prev === 'system') return 'light';
+      if (prev === 'light') return 'dark';
+      return 'system';
+    });
   };
 
   // --- Effects ---
 
   useEffect(() => {
+    localStorage.setItem('flowstream_theme', themeMode);
+
+    if (themeMode === 'system') {
+      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      setIsDarkMode(mediaQuery.matches);
+
+      const handler = (e: MediaQueryListEvent) => setIsDarkMode(e.matches);
+      mediaQuery.addEventListener('change', handler);
+      return () => mediaQuery.removeEventListener('change', handler);
+    } else {
+      setIsDarkMode(themeMode === 'dark');
+    }
+  }, [themeMode]);
+
+  useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setSelectedNodeId(null);
+        setSelectedNodeIds([]);
         setSelectedConnectionId(null);
         setConnectionDraft(null);
+        setSelectionBox(null);
         return;
       }
 
@@ -365,8 +506,8 @@ export default function App() {
         const isInput = active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA';
 
         if (!isInput) {
-          if (selectedNodeId) {
-            handleNodeDelete(selectedNodeId);
+          if (selectedNodeIds.length > 0) {
+            handleNodesDelete(selectedNodeIds);
           }
           if (selectedConnectionId) {
             handleConnectionDelete(selectedConnectionId);
@@ -376,7 +517,7 @@ export default function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedNodeId, selectedConnectionId]);
+  }, [selectedNodeIds, selectedConnectionId, selectionBox]);
 
   return (
     <div className={`${isDarkMode ? 'dark' : ''} w-full h-full`}>
@@ -425,6 +566,32 @@ export default function App() {
           <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1"></div>
 
           <button
+            onClick={() => fileInputRef.current?.click()}
+            className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 transition-colors tooltip-trigger relative group"
+            title="Import Canvas"
+          >
+            <Upload className="w-5 h-5" />
+          </button>
+
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleImportCanvas}
+            accept=".json"
+            className="hidden"
+          />
+
+          <button
+            onClick={handleExportCanvas}
+            className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 transition-colors tooltip-trigger relative group"
+            title="Export Canvas"
+          >
+            <Download className="w-5 h-5" />
+          </button>
+
+          <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1"></div>
+
+          <button
             onClick={() => setShowAIPrompt(true)}
             className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white shadow-md hover:shadow-lg hover:scale-105 transition-all text-sm font-medium"
           >
@@ -435,11 +602,11 @@ export default function App() {
           <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1"></div>
 
           <button
-            onClick={toggleDarkMode}
-            className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 transition-colors"
-            title="Toggle Theme"
+            onClick={toggleThemeMode}
+            className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 transition-colors tooltip-trigger relative group"
+            title={`Toggle Theme: ${themeMode.charAt(0).toUpperCase() + themeMode.slice(1)}`}
           >
-            {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+            {themeMode === 'system' ? <Monitor className="w-5 h-5" /> : themeMode === 'dark' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
           </button>
         </div>
 
@@ -459,7 +626,7 @@ export default function App() {
                   isSelected={selectedConnectionId === conn.id}
                   onSelect={() => {
                     setSelectedConnectionId(conn.id);
-                    setSelectedNodeId(null);
+                    setSelectedNodeIds([]);
                   }}
                   isDarkMode={isDarkMode}
                 />
@@ -475,6 +642,19 @@ export default function App() {
                 mouseY={mousePos.y}
               />
             )}
+
+            {/* Selection Box */}
+            {selectionBox && (
+              <rect
+                x={Math.min(selectionBox.startX, selectionBox.endX)}
+                y={Math.min(selectionBox.startY, selectionBox.endY)}
+                width={Math.abs(selectionBox.endX - selectionBox.startX)}
+                height={Math.abs(selectionBox.endY - selectionBox.startY)}
+                fill="none"
+                className="stroke-indigo-500 fill-indigo-500/10 stroke-[2px]"
+                strokeDasharray="4,4"
+              />
+            )}
           </svg>
 
           {/* Nodes Layer */}
@@ -483,11 +663,11 @@ export default function App() {
               <NodeItem
                 key={node.id}
                 node={node}
-                isSelected={selectedNodeId === node.id}
-                isDragging={draggingNodeId === node.id}
+                isSelected={selectedNodeIds.includes(node.id)}
+                isDragging={selectedNodeIds.includes(node.id) && draggingNodeId !== null}
                 isResizing={resizingNodeId === node.id}
                 onMouseDown={(e) => handlePointerDown(e, node.id)}
-                onClick={(id) => setSelectedNodeId(id)}
+                onClick={(id) => { }}
                 onStatusChange={handleStatusChange}
                 onConnectStart={handleConnectStart}
                 onConnectEnd={handleConnectEnd}
