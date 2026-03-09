@@ -25,6 +25,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div
             className={`fixed left-0 top-0 h-full bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 transition-[width] duration-300 ease-in-out z-40 flex flex-col shadow-xl overflow-hidden ${isOpen ? 'w-64' : 'w-14'
                 }`}
+            onPointerDown={(e) => e.stopPropagation()}
         >
             <div
                 className={`h-16 flex items-center border-b border-slate-200 dark:border-slate-800 shrink-0 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors group relative`}

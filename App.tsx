@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Wand2, Moon, Sun, Loader2, Download, Upload, Monitor } from 'lucide-react';
+import { Plus, Wand2, Moon, Sun, Loader2, Download, Upload, Monitor, ZoomIn, ZoomOut, Maximize } from 'lucide-react';
 import { WorkflowNode, Connection, NodeStatus, NodeType, CanvasMetadata, Canvas } from './types';
 import { NodeItem } from './components/NodeItem';
 import { ConnectionLine, TempConnectionLine } from './components/ConnectionLine';
@@ -58,6 +58,19 @@ export default function App() {
 
   // Mouse Tracking
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+
+  // Viewport/Zoom State
+  const [viewport, setViewport] = useState({ x: 0, y: 0, zoom: 1 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [isSpacePressed, setIsSpacePressed] = useState(false);
+  const lastPanPos = useRef({ x: 0, y: 0 });
+
+  const screenToCanvas = (screenX: number, screenY: number) => {
+    return {
+      x: (screenX - viewport.x) / viewport.zoom,
+      y: (screenY - viewport.y) / viewport.zoom
+    };
+  };
 
   // --- Initialization ---
 
@@ -168,6 +181,15 @@ export default function App() {
   const handlePointerDown = (e: React.PointerEvent, nodeId?: string) => {
     e.stopPropagation();
 
+    const isPanAction = e.button === 1 || e.button === 2 || (e.button === 0 && isSpacePressed);
+
+    if (isPanAction) {
+      setIsPanning(true);
+      lastPanPos.current = { x: e.clientX, y: e.clientY };
+      e.currentTarget.setPointerCapture(e.pointerId);
+      return;
+    }
+
     // Canvas click
     if (!nodeId) {
       if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
@@ -177,11 +199,12 @@ export default function App() {
         selectionBaseline.current = [...selectedNodeIds];
       }
       setSelectedConnectionId(null);
+      const startPos = screenToCanvas(e.clientX, e.clientY);
       setSelectionBox({
-        startX: e.clientX,
-        startY: e.clientY,
-        endX: e.clientX,
-        endY: e.clientY
+        startX: startPos.x,
+        startY: startPos.y,
+        endX: startPos.x,
+        endY: startPos.y
       });
       e.currentTarget.setPointerCapture(e.pointerId);
       return;
@@ -276,10 +299,18 @@ export default function App() {
   const handlePointerMove = (e: React.PointerEvent) => {
     setMousePos({ x: e.clientX, y: e.clientY });
 
+    if (isPanning) {
+      const dx = e.clientX - lastPanPos.current.x;
+      const dy = e.clientY - lastPanPos.current.y;
+      setViewport(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
+      lastPanPos.current = { x: e.clientX, y: e.clientY };
+      return;
+    }
+
     // Handle Resize
     if (resizingNodeId) {
-      const dx = e.clientX - resizeStartPos.current.x;
-      const dy = e.clientY - resizeStartPos.current.y;
+      const dx = (e.clientX - resizeStartPos.current.x) / viewport.zoom;
+      const dy = (e.clientY - resizeStartPos.current.y) / viewport.zoom;
 
       setNodes(prev => prev.map(n => {
         if (n.id === resizingNodeId) {
@@ -296,8 +327,8 @@ export default function App() {
 
     // Handle Drag
     if (draggingNodeId) {
-      const dx = e.clientX - dragStartMousePos.current.x;
-      const dy = e.clientY - dragStartMousePos.current.y;
+      const dx = (e.clientX - dragStartMousePos.current.x) / viewport.zoom;
+      const dy = (e.clientY - dragStartMousePos.current.y) / viewport.zoom;
 
       setNodes(prev => prev.map(n => {
         const startState = dragStartNodes.current.find(s => s.id === n.id);
@@ -315,12 +346,13 @@ export default function App() {
 
     // Handle Selection Box
     if (selectionBox) {
-      setSelectionBox(prev => prev ? { ...prev, endX: e.clientX, endY: e.clientY } : null);
+      const currentPos = screenToCanvas(e.clientX, e.clientY);
+      setSelectionBox(prev => prev ? { ...prev, endX: currentPos.x, endY: currentPos.y } : null);
 
-      const minX = Math.min(selectionBox.startX, e.clientX);
-      const maxX = Math.max(selectionBox.startX, e.clientX);
-      const minY = Math.min(selectionBox.startY, e.clientY);
-      const maxY = Math.max(selectionBox.startY, e.clientY);
+      const minX = Math.min(selectionBox.startX, currentPos.x);
+      const maxX = Math.max(selectionBox.startX, currentPos.x);
+      const minY = Math.min(selectionBox.startY, currentPos.y);
+      const maxY = Math.max(selectionBox.startY, currentPos.y);
 
       const intersectingIds = nodes.filter(n => {
         return n.x < maxX && (n.x + n.width) > minX &&
@@ -333,6 +365,7 @@ export default function App() {
   };
 
   const handlePointerUp = () => {
+    setIsPanning(false);
     setDraggingNodeId(null);
     setResizingNodeId(null);
     if (connectionDraft) {
@@ -341,14 +374,45 @@ export default function App() {
     setSelectionBox(null);
   };
 
+  const handleWheel = (e: React.WheelEvent) => {
+    if (e.ctrlKey || e.metaKey) {
+      setViewport(prev => {
+        const zoomChange = e.deltaY > 0 ? 0.9 : 1.1;
+        const newZoom = Math.min(Math.max(0.1, prev.zoom * zoomChange), 4);
+        const newX = e.clientX - (e.clientX - prev.x) * (newZoom / prev.zoom);
+        const newY = e.clientY - (e.clientY - prev.y) * (newZoom / prev.zoom);
+        return { x: newX, y: newY, zoom: newZoom };
+      });
+    } else {
+      setViewport(prev => ({
+        ...prev,
+        x: prev.x - e.deltaX,
+        y: prev.y - e.deltaY
+      }));
+    }
+  };
+
+  const handleZoom = (delta: number) => {
+    setViewport(prev => {
+      const newZoom = Math.min(Math.max(0.1, prev.zoom + delta), 4);
+      const centerX = window.innerWidth / 2;
+      const centerY = window.innerHeight / 2;
+      const newX = centerX - (centerX - prev.x) * (newZoom / prev.zoom);
+      const newY = centerY - (centerY - prev.y) * (newZoom / prev.zoom);
+      return { x: newX, y: newY, zoom: newZoom };
+    });
+  };
+
   const addNode = () => {
     // If no canvas open, create one first? (Should ideally be handled by init)
 
     // Position near center but randomized slightly to avoid stacking
+    // Position near center based on viewport
+    const centerPos = screenToCanvas(window.innerWidth / 2, window.innerHeight / 2);
     const newNode: WorkflowNode = {
       id: `node-${Date.now()}`,
-      x: window.innerWidth / 2 - 128 + (Math.random() * 40 - 20),
-      y: window.innerHeight / 2 - 80 + (Math.random() * 40 - 20),
+      x: centerPos.x - 128 + (Math.random() * 40 - 20),
+      y: centerPos.y - 80 + (Math.random() * 40 - 20),
       width: 256,
       height: 160,
       title: 'New Task',
@@ -493,6 +557,15 @@ export default function App() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        const active = document.activeElement;
+        const isInput = active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA';
+        if (!isInput) {
+          setIsSpacePressed(true);
+          e.preventDefault();
+        }
+      }
+
       if (e.key === 'Escape') {
         setSelectedNodeIds([]);
         setSelectedConnectionId(null);
@@ -515,18 +588,31 @@ export default function App() {
         }
       }
     };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        setIsSpacePressed(false);
+      }
+    };
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
   }, [selectedNodeIds, selectedConnectionId, selectionBox]);
 
   return (
     <div className={`${isDarkMode ? 'dark' : ''} w-full h-full`}>
       <div
-        className="w-full h-screen bg-slate-50 dark:bg-slate-950 overflow-hidden relative font-sans text-slate-900 dark:text-slate-100 dot-pattern transition-colors duration-300"
+        className={`w-full h-screen bg-slate-50 dark:bg-slate-950 overflow-hidden relative font-sans text-slate-900 dark:text-slate-100 dot-pattern transition-colors duration-300 ${isPanning ? 'cursor-grabbing' : isSpacePressed ? 'cursor-grab' : ''}`}
         onPointerDown={(e) => handlePointerDown(e)}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
+        onWheel={handleWheel}
+        onContextMenu={(e) => e.preventDefault()}
       >
 
         {/* --- Sidebar & Toggle --- */}
@@ -542,7 +628,10 @@ export default function App() {
         />
 
         {/* --- Toolbar --- */}
-        <div className={`absolute top-4 left-1/2 -translate-x-1/2 z-30 bg-white dark:bg-slate-900 shadow-lg dark:shadow-slate-900/50 rounded-full px-4 py-2 flex items-center gap-2 border border-slate-200 dark:border-slate-800 transition-all duration-300 ${isSidebarOpen ? 'ml-32' : 'ml-7'}`}>
+        <div
+          className={`absolute top-4 left-1/2 -translate-x-1/2 z-30 bg-white dark:bg-slate-900 shadow-lg dark:shadow-slate-900/50 rounded-full px-4 py-2 flex items-center gap-2 border border-slate-200 dark:border-slate-800 transition-all duration-300 ${isSidebarOpen ? 'ml-32' : 'ml-7'}`}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
 
           {/* Canvas Name Editor */}
           <input
@@ -612,76 +701,115 @@ export default function App() {
 
         {/* --- Canvas Content --- */}
         <div className={`w-full h-full transition-all duration-300 ${isSidebarOpen ? 'ml-64 w-[calc(100%-16rem)]' : 'ml-14 w-[calc(100%-3.5rem)]'}`}>
-          <svg className="absolute top-0 left-0 w-full h-full pointer-events-none z-0">
-            {/* Existing Connections */}
-            {connections.map(conn => {
-              const start = nodes.find(n => n.id === conn.from);
-              const end = nodes.find(n => n.id === conn.to);
-              if (!start || !end) return null;
-              return (
-                <ConnectionLine
-                  key={conn.id}
-                  startNode={start}
-                  endNode={end}
-                  isSelected={selectedConnectionId === conn.id}
-                  onSelect={() => {
-                    setSelectedConnectionId(conn.id);
-                    setSelectedNodeIds([]);
-                  }}
-                  isDarkMode={isDarkMode}
+          <div
+            style={{
+              transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
+              transformOrigin: '0 0'
+            }}
+            className="w-full h-full absolute inset-0"
+          >
+            <svg className="absolute top-0 left-0 w-full h-full pointer-events-none z-0 overflow-visible">
+              {/* Existing Connections */}
+              {connections.map(conn => {
+                const start = nodes.find(n => n.id === conn.from);
+                const end = nodes.find(n => n.id === conn.to);
+                if (!start || !end) return null;
+                return (
+                  <ConnectionLine
+                    key={conn.id}
+                    startNode={start}
+                    endNode={end}
+                    isSelected={selectedConnectionId === conn.id}
+                    onSelect={() => {
+                      setSelectedConnectionId(conn.id);
+                      setSelectedNodeIds([]);
+                    }}
+                    isDarkMode={isDarkMode}
+                  />
+                );
+              })}
+
+              {/* Temporary Connection Line (while dragging) */}
+              {connectionDraft && (
+                <TempConnectionLine
+                  startX={connectionDraft.startX}
+                  startY={connectionDraft.startY}
+                  mouseX={screenToCanvas(mousePos.x, mousePos.y).x}
+                  mouseY={screenToCanvas(mousePos.x, mousePos.y).y}
                 />
-              );
-            })}
+              )}
 
-            {/* Temporary Connection Line (while dragging) */}
-            {connectionDraft && (
-              <TempConnectionLine
-                startX={connectionDraft.startX}
-                startY={connectionDraft.startY}
-                mouseX={mousePos.x}
-                mouseY={mousePos.y}
-              />
-            )}
+              {/* Selection Box */}
+              {selectionBox && (
+                <rect
+                  x={Math.min(selectionBox.startX, selectionBox.endX)}
+                  y={Math.min(selectionBox.startY, selectionBox.endY)}
+                  width={Math.abs(selectionBox.endX - selectionBox.startX)}
+                  height={Math.abs(selectionBox.endY - selectionBox.startY)}
+                  fill="none"
+                  className="stroke-indigo-500 fill-indigo-500/10 stroke-[2px]"
+                  strokeDasharray="4,4"
+                />
+              )}
+            </svg>
 
-            {/* Selection Box */}
-            {selectionBox && (
-              <rect
-                x={Math.min(selectionBox.startX, selectionBox.endX)}
-                y={Math.min(selectionBox.startY, selectionBox.endY)}
-                width={Math.abs(selectionBox.endX - selectionBox.startX)}
-                height={Math.abs(selectionBox.endY - selectionBox.startY)}
-                fill="none"
-                className="stroke-indigo-500 fill-indigo-500/10 stroke-[2px]"
-                strokeDasharray="4,4"
-              />
-            )}
-          </svg>
-
-          {/* Nodes Layer */}
-          <div className="absolute top-0 left-0 w-full h-full z-0 pointer-events-none">
-            {nodes.map(node => (
-              <NodeItem
-                key={node.id}
-                node={node}
-                isSelected={selectedNodeIds.includes(node.id)}
-                isDragging={selectedNodeIds.includes(node.id) && draggingNodeId !== null}
-                isResizing={resizingNodeId === node.id}
-                onMouseDown={(e) => handlePointerDown(e, node.id)}
-                onClick={(id) => { }}
-                onStatusChange={handleStatusChange}
-                onConnectStart={handleConnectStart}
-                onConnectEnd={handleConnectEnd}
-                onResizeStart={handleResizeStart}
-                onUpdate={handleNodeUpdate}
-                onDelete={handleNodeDelete}
-              />
-            ))}
+            {/* Nodes Layer */}
+            <div className="absolute top-0 left-0 w-full h-full z-0 pointer-events-none">
+              {nodes.map(node => (
+                <NodeItem
+                  key={node.id}
+                  node={node}
+                  isSelected={selectedNodeIds.includes(node.id)}
+                  isDragging={selectedNodeIds.includes(node.id) && draggingNodeId !== null}
+                  isResizing={resizingNodeId === node.id}
+                  onMouseDown={(e) => handlePointerDown(e, node.id)}
+                  onClick={(id) => { }}
+                  onStatusChange={handleStatusChange}
+                  onConnectStart={handleConnectStart}
+                  onConnectEnd={handleConnectEnd}
+                  onResizeStart={handleResizeStart}
+                  onUpdate={handleNodeUpdate}
+                  onDelete={handleNodeDelete}
+                />
+              ))}
+            </div>
           </div>
+        </div>
+
+        {/* --- Zoom Controls --- */}
+        <div
+          className="absolute bottom-6 right-6 z-30 flex flex-col gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-1 rounded-xl shadow-lg dark:shadow-slate-900/50"
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={() => handleZoom(0.2)}
+            className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition-colors"
+            title="Zoom In"
+          >
+            <ZoomIn className="w-5 h-5" />
+          </button>
+          <button
+            onClick={() => setViewport({ x: 0, y: 0, zoom: 1 })}
+            className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition-colors"
+            title="Reset Zoom"
+          >
+            <span className="text-xs font-bold font-mono">{Math.round(viewport.zoom * 100)}%</span>
+          </button>
+          <button
+            onClick={() => handleZoom(-0.2)}
+            className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition-colors"
+            title="Zoom Out"
+          >
+            <ZoomOut className="w-5 h-5" />
+          </button>
         </div>
 
         {/* --- AI Prompt Modal --- */}
         {showAIPrompt && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div
+            className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm"
+            onPointerDown={(e) => e.stopPropagation()}
+          >
             <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-100 dark:border-slate-800">
               <div className="p-6 bg-slate-50 dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
                 <h3 className="text-xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
